@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0"/>
+<title>Minhas Vendas</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:#f5f5f0;font-family:sans-serif;}
+  ::-webkit-scrollbar{width:4px;}
+  ::-webkit-scrollbar-thumb{background:#ccc;border-radius:4px;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── Storage (localStorage — funciona em qualquer hospedagem) ──────────────────
+const SK_PROD = "mv_produtos_v3";
+const SK_VEND = "mv_vendas_v3";
+function cGet(key){ try{ const r=localStorage.getItem(key); return r?JSON.parse(r):null; }catch{ return null; } }
+function cSet(key,data){ try{ localStorage.setItem(key,JSON.stringify(data)); }catch{} }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function fBRL(v){ return Number(v).toLocaleString("pt-BR",{style:"currency",currency:"BRL"}); }
+function hoje(){ return new Date().toLocaleDateString("pt-BR"); }
+
+const PAGAMENTOS = ["Pix","Cartão","Dinheiro","Fiado"];
+const PAG_COLOR  = {Pix:"#1565C0",Cartão:"#6A1B9A",Dinheiro:"#2E7D32",Fiado:"#E65100"};
+const INIT_PRODS = [
+  {id:1,nome:"AÇAÍ",preco:12,estoque:10,categoria:""},
+  {id:2,nome:"AMENDOIM",preco:5,estoque:20,categoria:""},
+];
+
+// ── Primitivos UI ─────────────────────────────────────────────────────────────
+function Overlay({children,onClose}){
+  return (
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.52)",zIndex:200,display:"flex",alignItems:"flex-end"}}>
+      <div onClick={e=>e.stopPropagation()} style={{width:"100%",maxHeight:"92vh",background:"#fff",borderRadius:"22px 22px 0 0",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function MHdr({title,onClose}){
+  return (
+    <div style={{padding:"16px 20px 12px",borderBottom:"1.5px solid #f0f0f0",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0,background:"#fff"}}>
+      <span style={{fontFamily:"Georgia,serif",fontSize:18,fontWeight:800,color:"#1a1a1a"}}>{title}</span>
+      <button onClick={onClose} style={{background:"#f0f0f0",border:"none",borderRadius:"50%",width:32,height:32,fontSize:18,cursor:"pointer",color:"#555",display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>
+    </div>
+  );
+}
+
+function MBody({children}){
+  return <div style={{overflowY:"auto",padding:"16px 20px 32px",flex:1}}>{children}</div>;
+}
+
+function Field({label,children}){
+  return (
+    <div style={{marginBottom:16}}>
+      <label style={{fontSize:11,fontWeight:700,color:"#999",display:"block",marginBottom:6,textTransform:"uppercase",letterSpacing:.7}}>{label}</label>
+      {children}
+    </div>
+  );
+}
+
+function Inp(props){
+  const {style:ext,...rest}=props;
+  return <input {...rest} style={{width:"100%",padding:"11px 14px",border:"1.5px solid #e0e0e0",borderRadius:10,fontSize:15,boxSizing:"border-box",fontFamily:"sans-serif",outline:"none",background:"#fafafa",...ext}}/>;
+}
+
+function Sel({children,...rest}){
+  return <select {...rest} style={{width:"100%",padding:"11px 14px",border:"1.5px solid #e0e0e0",borderRadius:10,fontSize:15,background:"#fafafa",fontFamily:"sans-serif"}}>{children}</select>;
+}
+
+function Btn({children,onClick,small,block,danger,ghost,warning,color,style:ext}){
+  let bg=color||"#2E7D32",fg="#fff";
+  if(danger){bg="#ffebee";fg="#c62828";}
+  if(ghost){bg="#f0f0f0";fg="#444";}
+  if(warning){bg="#fff3e0";fg="#e65100";}
+  return (
+    <button onClick={onClick} style={{background:bg,color:fg,border:"none",borderRadius:small?8:12,padding:small?"7px 13px":"13px 20px",fontSize:small?12:15,fontWeight:700,cursor:"pointer",fontFamily:"sans-serif",display:"inline-flex",alignItems:"center",gap:5,width:block?"100%":undefined,justifyContent:"center",...ext}}>
+      {children}
+    </button>
+  );
+}
+
+function PagBtn({label,active,color,onClick}){
+  return (
+    <button onClick={onClick} style={{padding:"8px 16px",borderRadius:20,border:`2px solid ${active?color:"#ddd"}`,background:active?color:"#fff",color:active?"#fff":"#666",fontWeight:700,fontSize:13,cursor:"pointer"}}>
+      {label}
+    </button>
+  );
+}
+
+function Badge({label,bg,color}){
+  return <span style={{fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:20,background:bg||"#e8f5e9",color:color||"#2E7D32",display:"inline-block"}}>{label}</span>;
+}
+
+function Confirm({msg,onOk,onCancel}){
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:24}}>
+      <div style={{background:"#fff",borderRadius:20,padding:28,maxWidth:340,width:"100%"}}>
+        <div style={{fontSize:15,fontWeight:600,color:"#1a1a1a",marginBottom:22,lineHeight:1.5}}>{msg}</div>
+        <div style={{display:"flex",gap:10}}>
+          <Btn ghost block onClick={onCancel}>Cancelar</Btn>
+          <Btn danger block onClick={onOk}>Confirmar</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Modal Produto ─────────────────────────────────────────────────────────────
+function ProdModal({produto,onSave,onClose}){
+  const [nome,setNome]=useState(produto?.nome||"");
+  const [preco,setPreco]=useState(produto?.preco||"");
+  const [estoque,setEstoque]=useState(produto?.estoque??"");
+  const [cat,setCat]=useState(produto?.categoria||"");
+  const [erro,setErro]=useState("");
+
+  function salvar(){
+    if(!nome.trim()){setErro("Informe o nome.");return;}
+    if(!preco||isNaN(preco)){setErro("Informe um preço válido.");return;}
+    onSave({id:produto?.id||Date.now(),nome:nome.trim().toUpperCase(),preco:parseFloat(preco),estoque:parseInt(estoque)||0,categoria:cat.trim()});
+  }
+
+  return (
+    <Overlay onClose={onClose}>
+      <MHdr title={produto?"✏️ Editar Produto":"📦 Novo Produto"} onClose={onClose}/>
+      <MBody>
+        <Field label="Nome do Produto"><Inp value={nome} onChange={e=>setNome(e.target.value)} placeholder="Ex: AÇAÍ"/></Field>
+        <Field label="Preço Unitário (R$)"><Inp type="number" step="0.01" value={preco} onChange={e=>setPreco(e.target.value)} placeholder="0,00"/></Field>
+        <Field label="Estoque Atual (unidades)"><Inp type="number" value={estoque} onChange={e=>setEstoque(e.target.value)} placeholder="0"/></Field>
+        <Field label="Categoria (opcional)"><Inp value={cat} onChange={e=>setCat(e.target.value)} placeholder="Ex: Alimentos, Bebidas…"/></Field>
+        {erro&&<div style={{color:"#c62828",fontSize:13,marginBottom:12,fontWeight:600}}>⚠ {erro}</div>}
+        <Btn block onClick={salvar} style={{marginTop:4}}>Salvar Produto</Btn>
+      </MBody>
+    </Overlay>
+  );
+}
+
+// ── Modal Venda ───────────────────────────────────────────────────────────────
+function VendaModal({venda,produtos,onSave,onDelete,onClose}){
+  const isEdit=!!venda;
+  const [cliente,setCliente]=useState(venda?.cliente||"");
+  const [data,setData]=useState(venda?.data||hoje());
+  const [pagamento,setPag]=useState(()=>{
+    if(!venda)return"Pix";
+    return venda.pago===false?"Fiado":(venda.pagamento==="Pago"?"Pix":venda.pagamento);
+  });
+  const [obs,setObs]=useState(venda?.obs||"");
+  const [itens,setItens]=useState(()=>{
+    if(!venda)return[{prodId:"",qtd:1}];
+    return venda.itens.map(it=>({prodId:String(produtos.find(p=>p.nome===it.nome)?.id||""),qtd:it.qtd}));
+  });
+  const [erro,setErro]=useState("");
+
+  const addItem=()=>setItens(p=>[...p,{prodId:"",qtd:1}]);
+  const remItem=i=>setItens(p=>p.filter((_,idx)=>idx!==i));
+  const updItem=(i,f,v)=>setItens(p=>{const c=[...p];c[i]={...c[i],[f]:v};return c;});
+
+  const total=itens.reduce((s,it)=>{
+    const p=produtos.find(x=>x.id===Number(it.prodId));
+    return s+(p?p.preco*Number(it.qtd||1):0);
+  },0);
+
+  function salvar(){
+    const validos=itens.filter(it=>it.prodId);
+    if(!validos.length){setErro("Selecione pelo menos um produto.");return;}
+    const novosItens=validos.map(it=>{
+      const p=produtos.find(x=>x.id===Number(it.prodId));
+      const qtd=Number(it.qtd||1);
+      return{nome:p.nome,preco:p.preco,qtd,subtotal:p.preco*qtd};
+    });
+    const isFiado=pagamento==="Fiado";
+    onSave({
+      id:venda?.id||Date.now(),
+      data,
+      cliente:cliente||"Sem nome",
+      pagamento:isFiado?"Fiado":pagamento,
+      pago:!isFiado,
+      obs,
+      itens:novosItens,
+      total:novosItens.reduce((s,i)=>s+i.subtotal,0),
+    },venda);
+  }
+
+  return (
+    <Overlay onClose={onClose}>
+      <MHdr title={isEdit?"✏️ Editar Venda":"🛒 Nova Venda"} onClose={onClose}/>
+      <MBody>
+        <Field label="Data"><Inp value={data} onChange={e=>setData(e.target.value)} placeholder="DD/MM/AAAA"/></Field>
+        <Field label="Cliente (opcional)"><Inp value={cliente} onChange={e=>setCliente(e.target.value)} placeholder="Nome do cliente…"/></Field>
+
+        <Field label="Forma de Pagamento">
+          <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+            {PAGAMENTOS.map(p=><PagBtn key={p} label={p} active={pagamento===p} color={PAG_COLOR[p]} onClick={()=>setPag(p)}/>)}
+          </div>
+          {pagamento!=="Fiado"
+            ?<div style={{background:"#e8f5e9",borderRadius:8,padding:"8px 12px",fontSize:13,color:"#2E7D32",fontWeight:600}}>✅ Será marcado como pago em {pagamento}.</div>
+            :<div style={{background:"#fff8e1",borderRadius:8,padding:"8px 12px",fontSize:13,color:"#e65100",fontWeight:600}}>⚠️ Será marcado como pendente (fiado).</div>
+          }
+        </Field>
+
+        <Field label="Itens da Venda">
+          {itens.map((it,i)=>(
+            <div key={i} style={{display:"flex",gap:8,marginBottom:10,alignItems:"center"}}>
+              <div style={{flex:2}}>
+                <Sel value={it.prodId} onChange={e=>updItem(i,"prodId",e.target.value)}>
+                  <option value="">Produto…</option>
+                  {produtos.map(p=><option key={p.id} value={p.id}>{p.nome} – {fBRL(p.preco)}</option>)}
+                </Sel>
+              </div>
+              <div style={{width:64}}><Inp type="number" min={1} value={it.qtd} onChange={e=>updItem(i,"qtd",e.target.value)} style={{textAlign:"center",padding:"11px 8px"}}/></div>
+              {itens.length>1&&<button onClick={()=>remItem(i)} style={{background:"#ffebee",color:"#c62828",border:"none",borderRadius:8,width:34,height:38,fontSize:18,cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",justifyContent:"center"}}>×</button>}
+            </div>
+          ))}
+          <button onClick={addItem} style={{width:"100%",padding:10,border:"2px dashed #c8e6c9",borderRadius:10,background:"none",color:"#2E7D32",fontWeight:700,cursor:"pointer",fontSize:14}}>+ Adicionar produto</button>
+        </Field>
+
+        <Field label="Observação (opcional)">
+          <textarea value={obs} onChange={e=>setObs(e.target.value)} placeholder="Detalhes adicionais…" style={{width:"100%",padding:"11px 14px",border:"1.5px solid #e0e0e0",borderRadius:10,fontSize:14,boxSizing:"border-box",fontFamily:"sans-serif",minHeight:68,resize:"vertical",background:"#fafafa"}}/>
+        </Field>
+
+        {total>0&&(
+          <div style={{background:"#f1f8e9",borderRadius:12,padding:"14px 18px",display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+            <span style={{fontWeight:600,color:"#555",fontSize:14}}>Total</span>
+            <span style={{fontFamily:"Georgia,serif",fontSize:24,fontWeight:800,color:"#2E7D32"}}>{fBRL(total)}</span>
+          </div>
+        )}
+
+        {erro&&<div style={{color:"#c62828",fontSize:13,marginBottom:12,fontWeight:600}}>⚠ {erro}</div>}
+        <Btn block onClick={salvar}>{isEdit?"Salvar Alterações":"Registrar Venda"}</Btn>
+        {isEdit&&onDelete&&(
+          <button onClick={onDelete} style={{width:"100%",marginTop:10,padding:"12px",background:"none",border:"2px solid #ffcdd2",borderRadius:12,color:"#c62828",fontWeight:700,fontSize:14,cursor:"pointer",fontFamily:"sans-serif"}}>
+            🗑 Excluir esta venda
+          </button>
+        )}
+      </MBody>
+    </Overlay>
+  );
+}
+
+// ── Chat IA ───────────────────────────────────────────────────────────────────
+function ChatIA({produtos,vendas,onClose}){
+  const [msgs,setMsgs]=useState([{role:"assistant",content:"Olá! Posso te ajudar com vendas, estoque, pendências e resumos. O que precisa?"}]);
+  const [input,setInput]=useState("");
+  const [loading,setLoading]=useState(false);
+  const bottomRef=useRef(null);
+  useEffect(()=>{bottomRef.current?.scrollIntoView({behavior:"smooth"});},[msgs]);
+
+  async function send(){
+    if(!input.trim()||loading)return;
+    const userMsg=input.trim();setInput("");
+    const history=[...msgs,{role:"user",content:userMsg}];
+    setMsgs(history);setLoading(true);
+    const totalAberto=vendas.filter(v=>!v.pago).reduce((s,v)=>s+v.total,0);
+    const system=`Você é assistente de um pequeno negócio brasileiro. Seja direto e conciso em português.
+ESTOQUE: ${produtos.map(p=>`${p.nome} R$${p.preco} ${p.estoque}un${p.estoque<=2?" CRÍTICO":""}`).join(" | ")}
+VENDAS (últimas 40): ${vendas.slice(-40).map(v=>`[${v.data}]${v.cliente}:${v.itens.map(i=>`${i.qtd}x${i.nome}`).join(",")}=${fBRL(v.total)}(${v.pago?v.pagamento:"FIADO"})`).join(" | ")}
+PENDENTE TOTAL: ${fBRL(totalAberto)} | VENDAS TOTAL: ${fBRL(vendas.reduce((s,v)=>s+v.total,0))}`;
+    try{
+      const res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:800,system,messages:history.map(m=>({role:m.role,content:m.content}))})});
+      const data=await res.json();
+      setMsgs([...history,{role:"assistant",content:data.content?.map(b=>b.text||"").join("")||"Erro ao responder."}]);
+    }catch{setMsgs([...history,{role:"assistant",content:"Erro de conexão. Tente novamente."}]);}
+    setLoading(false);
+  }
+
+  return (
+    <Overlay onClose={onClose}>
+      <MHdr title="🤖 Assistente de Vendas" onClose={onClose}/>
+      <div style={{flex:1,overflowY:"auto",padding:"12px 16px",display:"flex",flexDirection:"column",gap:10}}>
+        {msgs.map((m,i)=>(
+          <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start"}}>
+            <div style={{maxWidth:"82%",padding:"10px 14px",borderRadius:m.role==="user"?"18px 18px 4px 18px":"18px 18px 18px 4px",background:m.role==="user"?"#2E7D32":"#f0f4f0",color:m.role==="user"?"#fff":"#1a1a1a",fontSize:14,lineHeight:1.55,whiteSpace:"pre-wrap"}}>{m.content}</div>
+          </div>
+        ))}
+        {loading&&<div style={{display:"flex"}}><div style={{background:"#f0f4f0",borderRadius:"18px 18px 18px 4px",padding:"10px 16px",color:"#888",fontSize:14}}>digitando…</div></div>}
+        <div ref={bottomRef}/>
+      </div>
+      <div style={{padding:"10px 14px 20px",borderTop:"1.5px solid #f0f0f0",display:"flex",gap:8}}>
+        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder="Pergunte algo…" style={{flex:1,padding:"11px 14px",border:"1.5px solid #e0e0e0",borderRadius:24,fontSize:14,outline:"none",background:"#fafafa",fontFamily:"sans-serif"}}/>
+        <button onClick={send} disabled={loading} style={{background:loading?"#aaa":"#2E7D32",color:"#fff",border:"none",borderRadius:24,padding:"11px 20px",fontWeight:700,cursor:"pointer",fontSize:14}}>Enviar</button>
+      </div>
+    </Overlay>
+  );
+}
+
+// ── App Principal ─────────────────────────────────────────────────────────────
+function App(){
+  const [tab,setTab]=useState("vendas");
+  const [produtos,setProdutos]=useState([]);
+  const [vendas,setVendas]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [showVenda,setShowVenda]=useState(false);
+  const [editVenda,setEditVenda]=useState(null);
+  const [showProd,setShowProd]=useState(false);
+  const [editProd,setEditProd]=useState(null);
+  const [showChat,setShowChat]=useState(false);
+  const [confirm,setConfirm]=useState(null);
+  const [toast,setToast]=useState(null);
+
+  useEffect(()=>{
+    const p=cGet(SK_PROD);
+    const v=cGet(SK_VEND);
+    setProdutos(p||INIT_PRODS);
+    setVendas(v||[]);
+    setLoading(false);
+  },[]);
+
+  const savP=useCallback(data=>{setProdutos(data);cSet(SK_PROD,data);},[]);
+  const savV=useCallback(data=>{setVendas(data);cSet(SK_VEND,data);},[]);
+
+  function showToast(msg){setToast(msg);setTimeout(()=>setToast(null),2500);}
+
+  // Produtos
+  function salvarProduto(prod){
+    savP(editProd?produtos.map(p=>p.id===prod.id?prod:p):[...produtos,prod]);
+    setShowProd(false);setEditProd(null);
+    showToast(editProd?"Produto atualizado ✓":"Produto criado ✓");
+  }
+  function deletarProduto(id){
+    savP(produtos.filter(p=>p.id!==id));
+    setConfirm(null);showToast("Produto excluído.");
+  }
+  function ajustarEstoque(id,delta){
+    savP(produtos.map(p=>p.id===id?{...p,estoque:Math.max(0,p.estoque+delta)}:p));
+  }
+
+  // Vendas
+  function salvarVenda(venda,original){
+    let prods=[...produtos];
+    if(original){
+      original.itens.forEach(it=>{const idx=prods.findIndex(p=>p.nome===it.nome);if(idx>=0)prods[idx]={...prods[idx],estoque:prods[idx].estoque+it.qtd};});
+      venda.itens.forEach(it=>{const idx=prods.findIndex(p=>p.nome===it.nome);if(idx>=0)prods[idx]={...prods[idx],estoque:Math.max(0,prods[idx].estoque-it.qtd)};});
+      savP(prods);
+      savV(vendas.map(v=>v.id===venda.id?venda:v));
+    }else{
+      venda.itens.forEach(it=>{const idx=prods.findIndex(p=>p.nome===it.nome);if(idx>=0)prods[idx]={...prods[idx],estoque:Math.max(0,prods[idx].estoque-it.qtd)};});
+      savP(prods);
+      savV([...vendas,venda]);
+    }
+    setShowVenda(false);setEditVenda(null);
+    showToast(original?"Venda atualizada ✓":"Venda registrada ✓");
+  }
+
+  function togglePago(id){
+    savV(vendas.map(v=>v.id===id?{...v,pago:!v.pago,pagamento:v.pago?"Fiado":(v.pagamento==="Fiado"?"Pago":v.pagamento)}:v));
+    showToast("Pagamento atualizado ✓");
+  }
+
+  function deletarVenda(id){
+    const venda=vendas.find(v=>v.id===id);
+    if(venda){
+      const prods=produtos.map(p=>{const it=venda.itens.find(i=>i.nome===p.nome);return it?{...p,estoque:p.estoque+it.qtd}:p;});
+      savP(prods);
+    }
+    savV(vendas.filter(v=>v.id!==id));
+    setConfirm(null);showToast("Venda excluída.");
+  }
+
+  const totalMes=vendas.reduce((s,v)=>s+v.total,0);
+  const totalAberto=vendas.filter(v=>!v.pago).reduce((s,v)=>s+v.total,0);
+  const card=border=>({background:"#fff",borderRadius:14,padding:"14px 16px",marginBottom:10,boxShadow:"0 1px 5px rgba(0,0,0,0.06)",borderLeft:`4px solid ${border}`});
+
+  if(loading)return(
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",background:"#f5f5f0",fontFamily:"Georgia,serif",color:"#2E7D32"}}>
+      <div style={{fontSize:44,marginBottom:16}}>📦</div>
+      <div style={{fontSize:18,fontWeight:800}}>Carregando…</div>
+      <div style={{fontSize:13,color:"#aaa",marginTop:6,fontFamily:"sans-serif"}}>Aguarde um instante</div>
+    </div>
+  );
+
+  return (
+    <div style={{fontFamily:"sans-serif",background:"#f5f5f0",minHeight:"100vh",maxWidth:520,margin:"0 auto",paddingBottom:90}}>
+
+      {/* HEADER */}
+      <div style={{background:"#1B5E20",color:"#fff",padding:"20px 18px 16px",position:"sticky",top:0,zIndex:100}}>
+        <div style={{fontFamily:"Georgia,serif",fontSize:22,fontWeight:800,letterSpacing:-.5}}>📦 Minhas Vendas</div>
+        <div style={{fontSize:11,opacity:.65,marginBottom:12,marginTop:2}}>Controle de estoque e lançamentos</div>
+        <div style={{display:"flex",gap:10}}>
+          {[["TOTAL MÊS",fBRL(totalMes),"#fff"],["EM ABERTO",fBRL(totalAberto),totalAberto>0?"#FFD54F":"#fff"],["PRODUTOS",String(produtos.length),"#fff"]].map(([l,v,c])=>(
+            <div key={l} style={{flex:1,background:"rgba(255,255,255,0.13)",borderRadius:10,padding:"10px 12px"}}>
+              <div style={{fontSize:9,opacity:.7,marginBottom:2,letterSpacing:.5,fontWeight:700}}>{l}</div>
+              <div style={{fontSize:15,fontWeight:800,color:c}}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* TABS */}
+      <div style={{display:"flex",background:"#fff",borderBottom:"2px solid #e8e8e8",position:"sticky",top:106,zIndex:99}}>
+        {[["vendas","🛒 Vendas"],["estoque","📦 Estoque"],["pendentes","⏳ Pendentes"]].map(([k,l])=>(
+          <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"11px 0",textAlign:"center",fontSize:13,fontWeight:tab===k?800:500,color:tab===k?"#2E7D32":"#999",border:"none",borderBottom:tab===k?"3px solid #2E7D32":"3px solid transparent",cursor:"pointer",background:"none"}}>{l}</button>
+        ))}
+      </div>
+
+      <div style={{padding:"14px 14px 0"}}>
+
+        {/* ABA VENDAS */}
+        {tab==="vendas"&&<>
+          <Btn block onClick={()=>{setEditVenda(null);setShowVenda(true);}} style={{marginBottom:14,marginTop:4,padding:15,fontSize:15,borderRadius:14}}>+ Nova Venda</Btn>
+          {vendas.length===0&&<div style={{textAlign:"center",color:"#ccc",padding:"50px 0",fontSize:15}}>Nenhuma venda registrada ainda.</div>}
+          {[...vendas].reverse().map(v=>{
+            const isFiado=!v.pago;
+            return(
+              <div key={v.id} style={card(isFiado?"#FF9800":(PAG_COLOR[v.pagamento]||"#4CAF50"))}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:800,fontSize:15,color:"#1a1a1a"}}>{v.cliente}</div>
+                    <div style={{fontSize:11,color:"#bbb",marginTop:1}}>{v.data}</div>
+                    <div style={{fontSize:13,color:"#666",marginTop:4,lineHeight:1.4}}>{v.itens.map(it=>`${it.qtd}× ${it.nome}`).join(", ")}</div>
+                    {v.obs&&<div style={{fontSize:12,color:"#aaa",marginTop:3,fontStyle:"italic"}}>{v.obs}</div>}
+                    <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
+                      <Btn small ghost onClick={()=>{setEditVenda(v);setShowVenda(true);}}>✏️ Editar</Btn>
+                      {isFiado&&<Btn small onClick={()=>togglePago(v.id)}>✓ Recebeu</Btn>}
+                    </div>
+                  </div>
+                  <div style={{textAlign:"right",marginLeft:12}}>
+                    <div style={{fontFamily:"Georgia,serif",fontSize:19,fontWeight:800,color:"#2E7D32"}}>{fBRL(v.total)}</div>
+                    <Badge label={isFiado?"FIADO":v.pagamento} bg={isFiado?"#fff8e1":"#e8f5e9"} color={isFiado?"#e65100":"#2E7D32"}/>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </>}
+
+        {/* ABA ESTOQUE */}
+        {tab==="estoque"&&<>
+          <Btn block onClick={()=>{setEditProd(null);setShowProd(true);}} style={{marginBottom:14,marginTop:4,padding:15,fontSize:15,borderRadius:14}}>+ Novo Produto</Btn>
+          {produtos.length===0&&<div style={{textAlign:"center",color:"#ccc",padding:"50px 0"}}>Nenhum produto cadastrado.</div>}
+          {produtos.map(p=>(
+            <div key={p.id} style={card(p.estoque<=2?"#f44336":p.estoque<=5?"#FF9800":"#4CAF50")}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{flex:1}}>
+                  <div style={{fontWeight:800,fontSize:15}}>{p.nome}</div>
+                  {p.categoria&&<div style={{fontSize:11,color:"#bbb"}}>{p.categoria}</div>}
+                  <div style={{fontFamily:"Georgia,serif",fontSize:18,color:"#2E7D32",fontWeight:800,marginTop:2}}>{fBRL(p.preco)}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
+                    <button onClick={()=>ajustarEstoque(p.id,-1)} style={{background:"#ffebee",color:"#c62828",border:"none",borderRadius:7,width:32,height:32,fontSize:20,cursor:"pointer",fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>−</button>
+                    <span style={{fontSize:14,fontWeight:700,minWidth:52,textAlign:"center"}}>{p.estoque} un.</span>
+                    <button onClick={()=>ajustarEstoque(p.id,1)} style={{background:"#e8f5e9",color:"#2E7D32",border:"none",borderRadius:7,width:32,height:32,fontSize:20,cursor:"pointer",fontWeight:900,display:"flex",alignItems:"center",justifyContent:"center"}}>+</button>
+                    {p.estoque<=2&&<span style={{fontSize:11,color:"#f44336",fontWeight:700}}>⚠ CRÍTICO</span>}
+                  </div>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",gap:6,marginLeft:12}}>
+                  <Btn small ghost onClick={()=>{setEditProd(p);setShowProd(true);}}>✏️ Editar</Btn>
+                  <Btn small danger onClick={()=>setConfirm({msg:`Excluir "${p.nome}"?`,ok:()=>deletarProduto(p.id)})}>🗑 Excluir</Btn>
+                </div>
+              </div>
+            </div>
+          ))}
+        </>}
+
+        {/* ABA PENDENTES */}
+        {tab==="pendentes"&&<>
+          <div style={{...card("#FF9800"),background:"#fff8e1",marginTop:4}}>
+            <div style={{fontSize:11,color:"#e65100",fontWeight:700,marginBottom:4}}>TOTAL A RECEBER</div>
+            <div style={{fontFamily:"Georgia,serif",fontSize:30,fontWeight:800,color:"#BF360C"}}>{fBRL(totalAberto)}</div>
+            <div style={{fontSize:12,color:"#aaa",marginTop:4}}>{vendas.filter(v=>!v.pago).length} venda(s) pendente(s)</div>
+          </div>
+          {vendas.filter(v=>!v.pago).length===0
+            ?<div style={{textAlign:"center",color:"#ccc",padding:"50px 0",fontSize:15}}>✅ Nenhuma conta pendente!</div>
+            :vendas.filter(v=>!v.pago).map(v=>(
+              <div key={v.id} style={card("#FF9800")}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontWeight:800,fontSize:15}}>{v.cliente}</div>
+                    <div style={{fontSize:11,color:"#bbb",marginTop:1}}>{v.data}</div>
+                    <div style={{fontSize:13,color:"#666",marginTop:4}}>{v.itens.map(it=>`${it.qtd}× ${it.nome}`).join(", ")}</div>
+                    {v.obs&&<div style={{fontSize:12,color:"#aaa",marginTop:3,fontStyle:"italic"}}>{v.obs}</div>}
+                    <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap"}}>
+                      <Btn small ghost onClick={()=>{setEditVenda(v);setShowVenda(true);}}>✏️ Editar</Btn>
+                      <Btn small onClick={()=>togglePago(v.id)}>✓ Recebeu</Btn>
+                    </div>
+                  </div>
+                  <div style={{fontFamily:"Georgia,serif",fontSize:20,fontWeight:800,color:"#BF360C",marginLeft:12}}>{fBRL(v.total)}</div>
+                </div>
+              </div>
+            ))
+          }
+        </>}
+      </div>
+
+      {/* FAB Chat */}
+      <button onClick={()=>setShowChat(true)} style={{position:"fixed",bottom:24,right:18,width:56,height:56,borderRadius:"50%",background:"#1B5E20",color:"#fff",border:"none",fontSize:22,cursor:"pointer",boxShadow:"0 4px 18px rgba(0,0,0,0.3)",zIndex:150}}>🤖</button>
+
+      {/* Toast */}
+      {toast&&<div style={{position:"fixed",bottom:96,left:"50%",transform:"translateX(-50%)",background:"#212121",color:"#fff",padding:"10px 22px",borderRadius:24,fontSize:13,fontWeight:600,zIndex:500,boxShadow:"0 4px 16px rgba(0,0,0,0.3)",whiteSpace:"nowrap"}}>{toast}</div>}
+
+      {/* Modais */}
+      {showVenda&&<VendaModal
+        venda={editVenda}
+        produtos={produtos}
+        onSave={salvarVenda}
+        onDelete={editVenda?()=>setConfirm({msg:`Excluir venda de ${editVenda.cliente} (${fBRL(editVenda.total)})?`,ok:()=>{setShowVenda(false);setEditVenda(null);deletarVenda(editVenda.id);}}):undefined}
+        onClose={()=>{setShowVenda(false);setEditVenda(null);}}
+      />}
+      {showProd&&<ProdModal produto={editProd} onSave={salvarProduto} onClose={()=>{setShowProd(false);setEditProd(null);}}/>}
+      {showChat&&<ChatIA produtos={produtos} vendas={vendas} onClose={()=>setShowChat(false)}/>}
+      {confirm&&<Confirm msg={confirm.msg} onOk={confirm.ok} onCancel={()=>setConfirm(null)}/>}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
